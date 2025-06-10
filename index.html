@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+
+<html lang="zh-Hant">
+
+<head>
+
+<meta charset="UTF-8" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+<title>互補濾波陀螺儀浮動視窗</title>
+
+<style>
+
+  /* 同之前CSS，略 */
+
+  body {
+
+    margin: 0;
+
+    background: #111;
+
+    color: #eee;
+
+    font-family: sans-serif;
+
+    overflow: hidden;
+
+  }
+
+  #controls {
+
+    position: fixed;
+
+    top: 10px; left: 10px;
+
+    background: rgba(0,0,0,0.7);
+
+    padding: 12px;
+
+    border-radius: 10px;
+
+    z-index: 10;
+
+    max-width: 320px;
+
+    transition: opacity 0.3s ease;
+
+  }
+
+  #toggleBtn {
+
+    position: fixed;
+
+    top: 10px; right: 10px;
+
+    z-index: 20;
+
+    background: rgba(255,255,255,0.2);
+
+    color: white;
+
+    border: 1px solid #ccc;
+
+    border-radius: 5px;
+
+    padding: 6px 12px;
+
+    cursor: pointer;
+
+    user-select: none;
+
+  }
+
+  #floatingWindow {
+
+    position: fixed;
+
+    top: 50%; left: 50%;
+
+    width: 400px; height: 300px;
+
+    background: white;
+
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+
+    overflow: hidden;
+
+    transform-style: preserve-3d;
+
+    transform-origin: center center;
+
+    z-index: 5;
+
+    border-radius: 8px;
+
+  }
+
+  iframe {
+
+    width: 100%;
+
+    height: 100%;
+
+    border: none;
+
+    display: block;
+
+  }
+
+  label {
+
+    font-size: 14px;
+
+    margin-top: 8px;
+
+    display: block;
+
+  }
+
+  input[type="number"], input[type="range"], input[type="file"] {
+
+    width: 100%;
+
+    margin-top: 4px;
+
+    background: #222;
+
+    border: none;
+
+    color: white;
+
+    padding: 6px 4px;
+
+    border-radius: 4px;
+
+  }
+
+  button {
+
+    margin-top: 10px;
+
+    width: 100%;
+
+    padding: 8px 0;
+
+    background: #333;
+
+    color: #eee;
+
+    border: none;
+
+    border-radius: 4px;
+
+    cursor: pointer;
+
+    font-weight: bold;
+
+  }
+
+  button:hover {
+
+    background: #555;
+
+  }
+
+</style>
+
+</head>
+
+<body>
+
+<button id="toggleBtn">隱藏控制列</button>
+
+<div id="controls">
+
+  <label>上傳 HTML 檔
+
+    <input type="file" id="upload" accept=".html" />
+
+  </label>
+
+  <label>寬度(px)
+
+    <input type="number" id="widthInput" value="400" min="100" max="1920" />
+
+  </label>
+
+  <label>高度(px)
+
+    <input type="number" id="heightInput" value="300" min="100" max="1080" />
+
+  </label>
+
+  <button id="applySizeBtn">套用視窗大小</button>
+
+  <label>視角縮放 (拉近/拉遠)
+
+    <input type="range" id="scaleRange" min="0.1" max="3" step="0.01" value="1" />
+
+  </label>
+
+  <button id="resetViewBtn">設為基準視角</button>
+
+</div>
+
+<div id="floatingWindow">
+
+  <iframe id="viewer" sandbox="allow-scripts allow-same-origin"></iframe>
+
+</div>
+
+<script>
+
+  // 基本元素
+
+  const upload = document.getElementById('upload');
+
+  const viewer = document.getElementById('viewer');
+
+  const floatingWindow = document.getElementById('floatingWindow');
+
+  const scaleRange = document.getElementById('scaleRange');
+
+  const widthInput = document.getElementById('widthInput');
+
+  const heightInput = document.getElementById('heightInput');
+
+  const applySizeBtn = document.getElementById('applySizeBtn');
+
+  const resetViewBtn = document.getElementById('resetViewBtn');
+
+  const toggleBtn = document.getElementById('toggleBtn');
+
+  const controls = document.getElementById('controls');
+
+  // 旋轉參數 (角度)
+
+  let rotX = 0;
+
+  let rotY = 0;
+
+  let lastTimestamp = null;
+
+  // 互補濾波參數
+
+  const alpha = 0.95;
+
+  // 基準角度
+
+  let baseRotX = 0;
+
+  let baseRotY = 0;
+
+  // 目前角度（濾波後）
+
+  let filteredRotX = 0;
+
+  let filteredRotY = 0;
+
+  // DeviceOrientation 事件用來取得角度（參考用）
+
+  let deviceBeta = 0;
+
+  let deviceGamma = 0;
+
+  // 檔案上傳載入 iframe
+
+  upload.addEventListener('change', e => {
+
+    const file = e.target.files[0];
+
+    if (file) {
+
+      const reader = new FileReader();
+
+      reader.onload = () => {
+
+        const blob = new Blob([reader.result], {type: 'text/html'});
+
+        const url = URL.createObjectURL(blob);
+
+        viewer.src = url;
+
+      };
+
+      reader.readAsText(file);
+
+    }
+
+  });
+
+  // 套用大小按鈕
+
+  applySizeBtn.addEventListener('click', () => {
+
+    const w = parseInt(widthInput.value);
+
+    const h = parseInt(heightInput.value);
+
+    if (w >= 100 && h >= 100) {
+
+      floatingWindow.style.width = w + 'px';
+
+      floatingWindow.style.height = h + 'px';
+
+    } else {
+
+      alert('寬度和高度至少要 100px');
+
+    }
+
+  });
+
+  // 旋轉更新函數
+
+  function updateRotation() {
+
+    // 轉 CSS transform 使用旋轉角度和縮放
+
+    floatingWindow.style.transform = 
+
+      `translate(-50%, -50%) rotateX(${filteredRotX}deg) rotateY(${filteredRotY}deg) scale(${scaleRange.value})`;
+
+  }
+
+  // 設為基準視角按鈕
+
+  resetViewBtn.addEventListener('click', () => {
+
+    baseRotX = deviceBeta;
+
+    baseRotY = deviceGamma;
+
+    filteredRotX = 0;
+
+    filteredRotY = 0;
+
+    alert('視角基準已設置');
+
+  });
+
+  // 隱藏/顯示控制列按鈕
+
+  let controlsVisible = true;
+
+  toggleBtn.addEventListener('click', () => {
+
+    controlsVisible = !controlsVisible;
+
+    controls.style.opacity = controlsVisible ? '1' : '0';
+
+    controls.style.pointerEvents = controlsVisible ? 'auto' : 'none';
+
+    toggleBtn.textContent = controlsVisible ? '隱藏控制列' : '顯示控制列';
+
+  });
+
+  // 取得裝置角度
+
+  window.addEventListener('deviceorientation', e => {
+
+    deviceBeta = e.beta || 0;   // 上下
+
+    deviceGamma = e.gamma || 0; // 左右
+
+  });
+
+  // 用 DeviceMotionEvent 取得陀螺儀角速度
+
+  window.addEventListener('devicemotion', e => {
+
+    const now = performance.now();
+
+    if (!lastTimestamp) {
+
+      lastTimestamp = now;
+
+      return;
+      
+      }
+
+    const dt = (now - lastTimestamp) / 1000; // 秒
+
+    lastTimestamp = now;
+
+    // 陀螺儀角速度 (rad/s)
+
+    const gyroX = e.rotationRate.beta || 0;  // 頭部上下轉動
+
+    const gyroY = e.rotationRate.gamma || 0; // 頭部左右轉動
+
+    // 將角速度(rad/s)轉換成角度(deg)
+
+    const gyroXdeg = gyroX * dt;
+
+    const gyroYdeg = gyroY * dt;
+
+    // 利用互補濾波器融合角速度和角度
+
+    filteredRotX = alpha * (filteredRotX + gyroXdeg) + (1 - alpha) * (deviceBeta - baseRotX);
+
+    filteredRotY = alpha * (filteredRotY + gyroYdeg) + (1 - alpha) * (deviceGamma - baseRotY);
+
+    updateRotation();
+
+  });
+
+  // 初始設置，讓視窗置中
+
+  floatingWindow.style.top = '50%';
+
+  floatingWindow.style.left = '50%';
+
+  updateRotation();
+
+</script>
+
+</body>
+
+</html>
